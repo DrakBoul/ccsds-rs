@@ -4,7 +4,6 @@ description = "Rust implementations of various CCSDS standards"
 homepage = "https://github.com/DrakBoul/ccsds-rs"
 github = "https://github.com/DrakBoul/ccsds-rs"
 readme = "README.md"
-categories = ["ccsds", "spp", "space"]
 version = "0.1.0"
 edition = "2024"
 license = "MIT"
