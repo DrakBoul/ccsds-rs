@@ -3,7 +3,9 @@
 //!
 //! General Usage:
 //! ``` rust
-//! fn main() {
+//! use ccsds::spp::{SpacePacket, PacketType, SequenceFlag};
+//!
+//! # fn main() {
 //!     // Define user specified data.
 //!     let my_payload = "Hello, world!".as_bytes().to_vec();
 //!
@@ -18,14 +20,14 @@
 //!     );
 //!
 //!     // Encode SpacePacket as vector of bytes for transmission
-//!     let encoded = my_space_packet.encode()
+//!     let encoded = my_space_packet.encode();
 //!
 //!     // Do something with space packet....
 //!
 //!     // Decoding a space packet.
 //!     let decoded = SpacePacket::decode(&mut encoded.as_slice())
 //!     .expect("Failed to decode SpacePacket!");
-//! }
+//! # }
 //!
 //! ```
 
@@ -192,21 +194,21 @@ impl SequenceFlag {
 /// Typical usage involves creating a SpacePacket, which internally constructs the PrimaryHeader
 /// using the arguments passed.
 /// ``` rust
-/// #! fn main () {
-///     // generates new SpacePacket, internally constructing the PrimaryHeader.
-///     let my_space_packet = SpacePacket::new(
-///         PacketType::Telecommand,
-///         false,
-///         17,
-///         SequenceFlag::Unsegmented,
-///         0,
-///         "Cool Space Data".as_bytes().to_vec()
-///     );
-///
-/// #! }
+/// use ccsds::spp::{SpacePacket, PacketType, SequenceFlag};
+/// # fn main () {
+/// // generates new SpacePacket, internally constructing the PrimaryHeader.
+/// let my_space_packet = SpacePacket::new(
+///     PacketType::Telecommand,
+///     false,
+///     17,
+///     SequenceFlag::Unsegmented,
+///     0,
+///     "Cool Space Data".as_bytes().to_vec()
+/// );
+/// # }
 /// ```
 ///
-/// Note that the length of the user data field is not included as a field within PrimaryHeader,
+/// Note that the user data length field is not included as a field within PrimaryHeader,
 /// The data length field is generated at encoding time of the SpacePacket.
 pub struct PrimaryHeader {
 
@@ -266,11 +268,11 @@ impl PrimaryHeader {
             u16::from(Self::VERSION) << Self::VERSION_SHIFT |
             self.packet_type.to_bits() << Self::PACKET_TYPE_SHIFT |
             u16::from(self.secondary_header) << Self::SECONDARY_HEADER_SHIFT |
-            u16::from(self.apid & Self::APID_MASK) << Self::APID_SHIFT;
+            self.apid & Self::APID_MASK << Self::APID_SHIFT;
 
         let sequence_ctl =
             self.sequence_flag.to_bits() << Self::SEQUENCE_FLAG_SHIFT |
-            u16::from(self.sequence_number) & Self::SEQUENCE_NUMBER_MASK;
+            self.sequence_number & Self::SEQUENCE_NUMBER_MASK;
 
         let mut encoded = Vec::new();
         encoded.extend_from_slice(&u16::to_be_bytes(packet_id));
