@@ -3,7 +3,7 @@
 //!
 //! General Usage:
 //! ``` rust
-//! use ccsds::spp::{SpacePacket, PacketType, SequenceFlag};
+//! use ccsds_rs::spp::{SpacePacket, PacketType, SequenceFlag};
 //!
 //! # fn main() {
 //!     // Define user specified data.
@@ -31,15 +31,25 @@
 //!
 //! ```
 
-use std::io::Read;
+use thiserror::Error;
 
+#[derive(Debug, PartialEq, Clone)]
 /// SPP Packet as defined by the CCSDS 133.0-B-2 Standard.
 pub struct SpacePacket {
+    /// [PrimaryHeader] of the Space Protocol Packet
     pub primary_header: PrimaryHeader,
+
+    /// Payload of Space Packet Protocol
     pub payload: Vec<u8>
 }
 
 impl SpacePacket {
+    /// size of the user data length field 
+    const DATA_LENGTH_SIZE: usize = 2;
+
+    /// Index of user data
+    const DATA_IDX: usize = 6;
+
     pub fn new(
         packet_type: PacketType, 
         secondary_header: bool,
@@ -48,9 +58,10 @@ impl SpacePacket {
         sequence_number: u16,
         payload: Vec<u8>
     ) -> Self {
-        assert!(payload.len() <= u16::MAX as usize);
-        assert!(apid <= PrimaryHeader::APID_MASK);
-        assert!(sequence_number <= PrimaryHeader::SEQUENCE_NUMBER_MASK);
+        assert!(payload.len() <= u16::MAX as usize, "user data must be less than 65536");
+        assert!(!payload.is_empty(), "user data cannot be left empty");
+        assert!(apid <= PrimaryHeader::APID_MASK, "application process ID is invalid");
+        assert!(sequence_number <= PrimaryHeader::SEQUENCE_NUMBER_MASK, "sequence number is invalid");
 
         let primary_header = PrimaryHeader {
             version: PrimaryHeader::VERSION,
@@ -71,23 +82,33 @@ impl SpacePacket {
         encoded.extend_from_slice(&u16::to_be_bytes((self.payload.len() - 1) as u16));
         encoded.extend_from_slice(&self.payload);
         encoded
-
     }
-    
+
     /// Decodes the primary header from a source that implements [Read]. Returns the result of the
     /// operation, on success giving the decoded [SpacePacket].
-    pub fn decode<R: Read>(buf: &mut R) -> std::io::Result<Self> {
+    ///
+    /// Decoding can fail for the following reasons:
+    /// - Incomplete data resulting in failure to parse primary header
+    /// - Insufficient data resulting in failure to parse user data
+    ///
+    /// Both of these errors are recoverable, and can most likely be resolved by reading more bytes
+    /// from the source, and attempting to decode again
+    pub fn decode(buf: &[u8]) -> Result<Self, Error> {
         let primary_header = PrimaryHeader::decode(buf)?;
-        
-        let mut tmp = [0u8; 2];
-        buf.read_exact(&mut tmp)?;
+
+        let data_len_bytes = buf
+            .get(PrimaryHeader::PRIMARY_HEADER_LEN..(PrimaryHeader::PRIMARY_HEADER_LEN + Self::DATA_LENGTH_SIZE))
+            .ok_or(Error::IncompleteHeader)?;
+
         // Add single byte back to payload length that we subtracted during encoding
-        let payload_len = u16::from_be_bytes(tmp) + 1;
+        let payload_len = u16::from_be_bytes([data_len_bytes[0], data_len_bytes[1]]) + 1;
 
-        let mut payload = vec![0u8; payload_len as usize];
-        buf.read_exact(&mut payload)?;
+        let payload = buf
+            .get(Self::DATA_IDX..(Self::DATA_IDX + payload_len as usize))
+            .ok_or(Error::InsufficientData { expected: payload_len as usize, found: buf[Self::DATA_IDX..].len() })?
+            .to_vec();
 
-        Ok(Self { primary_header, payload })
+        Ok( Self { primary_header, payload } )
     }
 }
 
@@ -108,7 +129,7 @@ impl PacketType {
             Self::Telecommand => 0b1,
         }
     }
-    
+
     /// Converts the raw bits (after being shifted) from the packet ID portion of the primary
     /// header into [PacketType].
     pub fn from_bits(bits: u16) -> Self {
@@ -194,7 +215,8 @@ impl SequenceFlag {
 /// Typical usage involves creating a SpacePacket, which internally constructs the PrimaryHeader
 /// using the arguments passed.
 /// ``` rust
-/// use ccsds::spp::{SpacePacket, PacketType, SequenceFlag};
+///
+/// use ccsds_rs::spp::{SpacePacket, PacketType, SequenceFlag};
 /// # fn main () {
 /// // generates new SpacePacket, internally constructing the PrimaryHeader.
 /// let my_space_packet = SpacePacket::new(
@@ -232,23 +254,27 @@ pub struct PrimaryHeader {
 }
 
 impl PrimaryHeader {
+
+    /// Size of the primary header
+    const PRIMARY_HEADER_LEN: usize = 4;
+
     /// Hardcoded version number for SPP
     const VERSION: u8 = 0b000;
 
-    /// Number of bits the [VERSION] needs to be shifted in the
-    /// [encode] function.
+    /// Number of bits the VERSION needs to be shifted in the
+    /// encode function.
     const VERSION_SHIFT: usize = 13;
     /// Number of bits the [PacketType] bit needs to be shifted in the
-    /// [encode] function.
+    /// encode function.
     const PACKET_TYPE_SHIFT: usize = 12;
     /// Number of bits the secondary_header bit needs to be shifted in the
-    /// [encode] function.
+    /// encode function.
     const SECONDARY_HEADER_SHIFT: usize = 11;
     /// Number of bits the apid needs to be shifted in the
-    /// [encode] function.
+    /// encode function.
     const APID_SHIFT: usize = 0;
     /// Number of bits the [SequenceFlag] bits needs to be shifted in the
-    /// [encode] function.
+    /// encode function.
     const SEQUENCE_FLAG_SHIFT: usize = 14;
 
     /// Mask of [PacketType] bit in the decode function.
@@ -262,10 +288,10 @@ impl PrimaryHeader {
     /// Mask of sequence_number bits in the decode function.
     const SEQUENCE_NUMBER_MASK: u16 = 0x3FFF;
 
-    /// Encodes the primary header into a vector of big endian bytes as described by CCSDS 133.0-B-2.
+    /// Encodes the [PrimaryHeader] into a vector of big endian bytes as described by CCSDS 133.0-B-2.
     pub fn encode(&self) -> Vec<u8> {
         let packet_id =
-            u16::from(Self::VERSION) << Self::VERSION_SHIFT |
+            u16::from(self.version) << Self::VERSION_SHIFT |
             self.packet_type.to_bits() << Self::PACKET_TYPE_SHIFT |
             u16::from(self.secondary_header) << Self::SECONDARY_HEADER_SHIFT |
             self.apid & Self::APID_MASK << Self::APID_SHIFT;
@@ -280,15 +306,14 @@ impl PrimaryHeader {
 
         encoded
     }
-    
-    /// Decodes the primary header from a source that implements [Read]. Returns the result of the
-    /// operation, on success giving the decoded [PrimaryHeader].
-    pub fn decode<R: Read>(buf: &mut R) -> std::io::Result<Self> {
-        let mut tmp = [0u8; 4];
-        buf.read_exact(&mut tmp)?;
 
-        let packet_id = u16::from_be_bytes([tmp[0], tmp[1]]);
-        let sequence_ctl = u16::from_be_bytes([tmp[2], tmp[3]]);
+    /// Decodes the [PrimaryHeader] from a source that implements [Read]. Returns the result of the
+    /// operation, on success giving the decoded [PrimaryHeader].
+    pub fn decode(buf: &[u8]) -> Result<Self, Error> {
+        let bytes = buf.get(0..Self::PRIMARY_HEADER_LEN).ok_or(Error::IncompleteHeader)?;
+
+        let packet_id = u16::from_be_bytes([bytes[0], bytes[1]]);
+        let sequence_ctl = u16::from_be_bytes([bytes[2], bytes[3]]);
 
         let (version, packet_type, secondary_header, apid) = (
             (packet_id >> Self::VERSION_SHIFT) as u8,
@@ -296,7 +321,11 @@ impl PrimaryHeader {
             packet_id & Self::SECONDARY_HEADER_MASK != 0,
             packet_id & Self::APID_MASK,
         );
-        
+
+        if version != Self::VERSION {
+            return Err(Error::Unsupported(version))
+        }
+
         let (sequence_flag, sequence_number) = (
             SequenceFlag::from_bits((sequence_ctl & Self::SEQUENCE_FLAG_MASK) >> Self::SEQUENCE_FLAG_SHIFT),
             sequence_ctl & Self::SEQUENCE_NUMBER_MASK
@@ -306,6 +335,21 @@ impl PrimaryHeader {
     }
 }
 
+#[derive(Debug, Error, PartialEq)]
+/// Enum protraying various errors encountered during decoding of [PrimaryHeader] and
+/// [SpacePacket].
+pub enum Error {
+    #[error("space packet protocol version {} not supported", .0)]    
+    Unsupported(u8),
+
+    /// Occurs when parsing the primary header fails
+    #[error("incomplete primary header")]
+    IncompleteHeader,
+
+    /// Occurs when parsing user data payload fails
+    #[error("insufficient data to complete decoding, found {}B but expected {}B", .found, .expected)]
+    InsufficientData{ expected: usize, found: usize },
+}
 
 
 #[cfg(test)]
@@ -331,7 +375,7 @@ pub mod tests {
             sequence_number: 0
         };
         let encoded = expected.encode();
-        let found = PrimaryHeader::decode(&mut encoded.as_slice()).unwrap();
+        let found = PrimaryHeader::decode(&encoded).unwrap();
         assert_eq!(expected, found)
     }
 
@@ -350,11 +394,68 @@ pub mod tests {
     ) {
         let expected = SpacePacket::new(packet_type, secondary_header, 0, sequence_flag, 0, payload);
         let encoded = expected.encode();
-        let found = SpacePacket::decode(&mut encoded.as_slice()).unwrap();
+        let found = SpacePacket::decode(&encoded).unwrap();
         assert_eq!(expected.primary_header, found.primary_header);
         assert_eq!(expected.payload, found.payload)
     }
+
+    #[rstest]
+    #[should_panic]
+    fn test_empty_user_data() {
+        let expected = SpacePacket::new(PacketType::Telemetry, false, 0, SequenceFlag::Continuation, 0, vec![]);
+        let encoded = expected.encode();
+        let found = SpacePacket::decode(&encoded).unwrap();
+        assert_eq!(expected.primary_header, found.primary_header);
+        assert_eq!(expected.payload, found.payload)
+    }
+
+    #[rstest]
+    fn test_incomplete_header_err(
+        #[values(1, 2, 3, 4, 5)] header_len: usize
+    ) {
+        let forged_header_packet = vec![0u8; header_len];
+        assert_eq!(SpacePacket::decode(&forged_header_packet), Err(Error::IncompleteHeader))
+    }
+
+    #[rstest]
+    #[case(vec![1; 5])]
+    #[case(vec![1; 1])]
+    #[case(vec![1; 128])]
+    #[case(vec![1; 12048])]
+    #[case(vec![1; 60000])]
+    fn test_insufficient_data_err(#[case] payload: Vec<u8>) {
+        let mut packet = PrimaryHeader {
+            version: PrimaryHeader::VERSION,
+            packet_type: PacketType::Telecommand,
+            secondary_header: false,
+            apid: 0,
+            sequence_flag: SequenceFlag::End,
+            sequence_number: 0
+        }.encode();
+
+        let bad_payload_len = payload.len() as u16 + 5 - 1;
+        packet.extend_from_slice(&u16::to_be_bytes(bad_payload_len));
+        packet.extend_from_slice(&payload);
+
+        assert_eq!(SpacePacket::decode(&packet), Err(Error::InsufficientData { expected: (bad_payload_len + 1) as usize, found: payload.len()  }))
+    }
+
+
+    #[rstest]
+    fn test_unsupported_err(#[values(1, 2, 3, 4, 5, 6, 7)] version: u8) {
+        let mut packet = SpacePacket::new(
+            PacketType::Telemetry,
+            false,
+            0,
+            SequenceFlag::Continuation,
+            0,
+            vec![1]
+        );
+
+        packet.primary_header.version = version;
+
+        let encoded = packet.encode();
+
+        assert_eq!(SpacePacket::decode(&encoded), Err(Error::Unsupported(version)))
+    }
 }
-
-
-
