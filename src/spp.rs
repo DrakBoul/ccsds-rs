@@ -25,7 +25,7 @@
 //!     // Do something with space packet....
 //!
 //!     // Decoding a space packet.
-//!     let decoded = SpacePacket::decode(&mut encoded.as_slice())
+//!     let decoded = SpacePacket::decode(&encoded)
 //!     .expect("Failed to decode SpacePacket!");
 //! # }
 //!
@@ -36,7 +36,7 @@ use thiserror::Error;
 #[derive(Debug, PartialEq, Clone)]
 /// SPP Packet as defined by the CCSDS 133.0-B-2 Standard.
 pub struct SpacePacket {
-    /// [PrimaryHeader] of the Space Protocol Packet
+    /// [PrimaryHeader] of the Space Packet Protocol
     pub primary_header: PrimaryHeader,
 
     /// Payload of Space Packet Protocol
@@ -84,15 +84,18 @@ impl SpacePacket {
         encoded
     }
 
-    /// Decodes the primary header from a source that implements [Read]. Returns the result of the
+    /// Decodes the primary header from a slice of bytes. Returns the result of the
     /// operation, on success giving the decoded [SpacePacket].
     ///
     /// Decoding can fail for the following reasons:
-    /// - Incomplete data resulting in failure to parse primary header
-    /// - Insufficient data resulting in failure to parse user data
+    /// - [Incomplete header][Error::IncompleteHeader] resulting in failure to parse [PrimaryHeader] 
+    /// - [Insufficient data][Error::InsufficientData] resulting in failure to parse the user data
+    /// - [Unsupported Space Packet Protocol][Error::Unsupported] resulting in failure to parse [SpacePacket]
     ///
-    /// Both of these errors are recoverable, and can most likely be resolved by reading more bytes
-    /// from the source, and attempting to decode again
+    /// Both [Incomplete header][Error::IncompleteHeader] and [Insufficient data][Error::InsufficientData] errors are recoverable.
+    /// In most cases its the result of either corrupted data, or the source not supplying enough
+    /// data to realize the completed [SpacePacket]. [Unsupported Space Packet Protocol][Error::Unsupported] is recoverable
+    /// but the crate does not support any Space Packet Protocol other then version 0.
     pub fn decode(buf: &[u8]) -> Result<Self, Error> {
         let primary_header = PrimaryHeader::decode(buf)?;
 
@@ -113,7 +116,7 @@ impl SpacePacket {
 }
 
 
-/// Indicates if the SPP packet is of the Telemetry or Telecommand types.
+/// Indicates if the [SpacePacket] packet is of the Telemetry or Telecommand type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PacketType {
     Telemetry = 0,
@@ -153,7 +156,7 @@ impl PacketType {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 /// Sequence flag indicating if the packet is the start, end, or continuation in a sequence of
-/// packets, or is the packet is unsegmented.
+/// [SpacePacket]s, or is the packet is unsegmented.
 pub enum SequenceFlag {
     Continuation = 0,
     Start = 1,
@@ -209,13 +212,12 @@ impl SequenceFlag {
 /// Primary Header used in the Space Packet Protocol.
 ///
 /// This data structure encapsulates the packet version number, packet identification, 
-/// and sequence control field of the primary header of a SPP Packet. It is possible, although
-/// not neccessary to work with the PrimaryHeader Struct directly. 
+/// and sequence control field of the primary header of a [SpacePacket]. It is possible, although
+/// not neccessary to work with the [PrimaryHeader] struct directly. 
 ///
-/// Typical usage involves creating a SpacePacket, which internally constructs the PrimaryHeader
+/// Typical usage involves creating a SpacePacket, which internally constructs the [PrimaryHeader]
 /// using the arguments passed.
 /// ``` rust
-///
 /// use ccsds_rs::spp::{SpacePacket, PacketType, SequenceFlag};
 /// # fn main () {
 /// // generates new SpacePacket, internally constructing the PrimaryHeader.
@@ -230,8 +232,8 @@ impl SequenceFlag {
 /// # }
 /// ```
 ///
-/// Note that the user data length field is not included as a field within PrimaryHeader,
-/// The data length field is generated at encoding time of the SpacePacket.
+/// Note that the user data length field is not included as a field within [PrimaryHeader],
+/// The data length field is generated at encoding time of the [SpacePacket].
 pub struct PrimaryHeader {
 
     /// Hardcoded to 0b000, but here incase standard changes in the future (3 bits)
@@ -307,8 +309,12 @@ impl PrimaryHeader {
         encoded
     }
 
-    /// Decodes the [PrimaryHeader] from a source that implements [Read]. Returns the result of the
+    /// Decodes the [PrimaryHeader] from a slice of bytes. Returns the result of the
     /// operation, on success giving the decoded [PrimaryHeader].
+    ///
+    /// Decoding can fail for the following reasons:
+    /// - [Unsupported Space Packet Protocol version][Error::Unsupported] if the version number found in the primary header is something other then version 0.
+    /// - [Incomplete header][Error::IncompleteHeader] if the byte slice supplied as an argument is less than 4 bytes in length.
     pub fn decode(buf: &[u8]) -> Result<Self, Error> {
         let bytes = buf.get(0..Self::PRIMARY_HEADER_LEN).ok_or(Error::IncompleteHeader)?;
 
@@ -339,14 +345,18 @@ impl PrimaryHeader {
 /// Enum protraying various errors encountered during decoding of [PrimaryHeader] and
 /// [SpacePacket].
 pub enum Error {
+
+    /// Occurs when Space Packet Protocol version number is something other than 0. currently only
+    /// version 0 is supported by the ccsds-rs crate.
     #[error("space packet protocol version {} not supported", .0)]    
     Unsupported(u8),
 
-    /// Occurs when parsing the primary header fails
+    /// Occurs when insufficient data is supplied to fully parse [PrimaryHeader]
     #[error("incomplete primary header")]
     IncompleteHeader,
 
-    /// Occurs when parsing user data payload fails
+    /// Occurs when user data length field in Space Packet Protocol packet is greater than the
+    /// actual payload length.
     #[error("insufficient data to complete decoding, found {}B but expected {}B", .found, .expected)]
     InsufficientData{ expected: usize, found: usize },
 }

@@ -1,6 +1,6 @@
 # ccsds-rs
 
-This crate implements various ccsds standards written in rust. See below for currently supported standards.
+This crate implements various ccsds standards in rust. See below for currently supported standards.
 
 ## Supported Standards
 
