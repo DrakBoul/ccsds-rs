@@ -2,13 +2,14 @@
 name = "ccsds-rs"
 description = "Rust implementations of various CCSDS standards"
 homepage = "https://github.com/DrakBoul/ccsds-rs"
-github = "https://github.com/DrakBoul/ccsds-rs"
+repository = "https://github.com/DrakBoul/ccsds-rs"
 readme = "README.md"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 license = "MIT"
 
 [dependencies]
+thiserror = "2.0.12"
 
 [dev-dependencies]
 rstest = "0.25.0"
@@ -16,5 +17,4 @@ rstest = "0.25.0"
 [features]
 default = ["spp"]
 spp = []
-
 
